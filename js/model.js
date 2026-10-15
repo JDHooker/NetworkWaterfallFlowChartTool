@@ -20,6 +20,17 @@
       showLegend: true,
       hideUnusedLanes: true,
       laneBy: 'host',            // 'host' | 'port' — one lane per address, or per address:port
+      // figure styling (see "Paper figure" in the Chart tab)
+      style: 'screen',           // 'screen' | 'paper'
+      fontFamily: 'sans',        // 'sans' | 'serif' | 'mono'
+      colorMode: 'color',        // 'color' | 'grey' | 'mono'
+      lineStyles: false,         // dash pattern per protocol family (for greyscale print)
+      strokeWidth: 2,
+      showTitle: true,
+      transparentBg: false,
+      timeUnit: 'auto',          // 'auto' | 's' | 'ms' | 'us'
+      figWidthIn: null,          // physical width for exports, in inches (null = native pixels)
+      exportDpi: 300,
       autoWiden: true,           // widen lane gaps so labels between adjacent lanes are not truncated
       hiddenProtos: [],
       filter: '',
@@ -105,11 +116,18 @@
   // ---------- formatting ----------
   function fmtBytes(n) { if (n < 1024) return n + ' B'; if (n < 1048576) return (n / 1024).toFixed(1) + ' KB'; return (n / 1048576).toFixed(2) + ' MB'; }
   function fmtDur(s) { if (s < 0.001) return (s * 1e6).toFixed(0) + ' µs'; if (s < 1) return (s * 1000).toFixed(1) + ' ms'; if (s < 60) return s.toFixed(3) + ' s'; return (s / 60).toFixed(1) + ' min'; }
-  function fmtTime(t, mode, t0, prev) {
+  function fmtSpan(d, unit, withSign) {
+    const sign = withSign ? '+' : '';
+    if (unit === 'ms') return sign + (d * 1000).toFixed(3) + ' ms';
+    if (unit === 'us') return sign + (d * 1e6).toFixed(0) + ' µs';
+    if (unit === 's') return sign + d.toFixed(3) + ' s';
+    return sign + d.toFixed(6) + ' s';
+  }
+  function fmtTime(t, mode, t0, prev, unit) {
     if (mode === 'none') return '';
     if (mode === 'absolute') { const d = new Date(t * 1000); const ms = Math.floor((t % 1) * 1000).toString().padStart(3, '0'); return d.toLocaleTimeString([], { hour12: false }) + '.' + ms; }
-    if (mode === 'delta') { return (prev == null ? '+0.000' : '+' + (t - prev).toFixed(t - prev < 0.01 ? 6 : 3)) + ' s'; }
-    return (t - t0).toFixed(6) + ' s';
+    if (mode === 'delta') { return prev == null ? fmtSpan(0, unit, true) : fmtSpan(t - prev, unit, true); }
+    return fmtSpan(t - t0, unit, false);
   }
 
   // ---------- event construction ----------

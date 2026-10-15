@@ -11,6 +11,20 @@
       families: { TCP: '#3987e5', TLS: '#d95926', HTTP: '#199e70', DNS: '#c98500', UDP: '#d55181', ICMP: '#008300', ARP: '#9085e9', Other: '#898781' } },
   };
 
+  // Print-oriented theme: black ink on white, recessive grey chrome.
+  THEMES.paper = { surface: '#ffffff', page: '#ffffff', ink: '#000000', ink2: '#222222', muted: '#555555', grid: '#c8c8c8', axis: '#8a8a8a', highlight: 'rgba(0,0,0,0.05)', select: 'rgba(0,0,0,0.10)',
+    families: { TCP: '#1f5fb4', TLS: '#c8541f', HTTP: '#138a5e', DNS: '#b57a00', UDP: '#b8406e', ICMP: '#1d6b1d', ARP: '#4f3fb0', Other: '#6b6b6b' } };
+  // Grey ramp for greyscale printing; line styles carry the protocol identity in that mode.
+  const GREYS = { TCP: '#111111', TLS: '#3d3d3d', HTTP: '#5e5e5e', DNS: '#7f7f7f', UDP: '#4c4c4c', ICMP: '#2b2b2b', ARP: '#8f8f8f', Other: '#a3a3a3' };
+  const DASH = { TCP: null, TLS: '7 3', HTTP: '2 2.5', DNS: '9 3 2 3', UDP: '4 3', ICMP: '12 4', ARP: '1.5 3.5', Other: '5 2 1 2' };
+  const SANS = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+  const SERIF = '"Times New Roman", Times, "Liberation Serif", serif';
+  const MONO = 'ui-monospace, Menlo, Consolas, monospace';
+  let FONT = SANS;
+  function fontFor(s) { return s.fontFamily === 'serif' ? SERIF : s.fontFamily === 'mono' ? MONO : SANS; }
+  function themeFor(s) { return s.style === 'paper' ? THEMES.paper : (THEMES[s.theme] || THEMES.light); }
+  function dashFor(s, ev) { if (!s.lineStyles) return null; const fam = ev.family || FAMILY_OF[ev.proto] || 'Other'; return DASH[fam] || null; }
+
   const FAMILY_OF = { TCP: 'TCP', TLS: 'TLS', QUIC: 'TLS', HTTP: 'HTTP', HTTP2: 'HTTP', SSDP: 'HTTP', DNS: 'DNS', mDNS: 'DNS', LLMNR: 'DNS', NBNS: 'DNS', UDP: 'UDP', ICMP: 'ICMP', ICMPv6: 'ICMP', ARP: 'ARP' };
 
   function colorFor(project, theme, ev) {
@@ -19,6 +33,9 @@
     if (pc[ev.proto]) return pc[ev.proto];
     const fam = ev.family || FAMILY_OF[ev.proto] || 'Other';
     if (pc[fam]) return pc[fam];
+    const mode = project.settings.colorMode || 'color';
+    if (mode === 'mono') return theme.ink;
+    if (mode === 'grey') return GREYS[fam] || GREYS.Other;
     return theme.families[fam] || theme.families.Other;
   }
   function protoColor(project, theme, proto) { return colorFor(project, theme, { proto, family: FAMILY_OF[proto] || (theme.families[proto] ? proto : 'Other') }); }
@@ -26,7 +43,6 @@
   // ---------- text measurement ----------
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
-  const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
   function measure(text, size, weight) { ctx.font = `${weight || 400} ${size}px ${FONT}`; return ctx.measureText(text).width; }
   function truncate(text, size, maxW, weight) {
     if (measure(text, size, weight) <= maxW) return text;
@@ -78,14 +94,16 @@
   // LADDER / WATERFALL VIEW
   // =====================================================================
   function renderLadder(project, built, opts) {
-    const s = project.settings; const theme = THEMES[s.theme] || THEMES.light;
-    const fs = s.fontSize || 12; const pad = 24;
+    const s = project.settings; const theme = themeFor(s); FONT = fontFor(s);
+    const fs = s.fontSize || 12; const pad = s.style === 'paper' ? 12 : 24;
+    const sw = s.strokeWidth || 2, head = Math.round(5 + sw * 2), hh = 2.5 + sw;
     const lanes = built.lanes; const events = built.events;
     const laneGap = Math.max(120, s.laneGap || 230);
     const timeCol = s.timeMode === 'none' ? 24 : 124;
     const hasComments = s.showComments && events.some(e => e.comment);
     const notesW = hasComments ? Math.max(140, s.notesWidth || 240) : 0;
-    const titleH = project.title ? (project.subtitle ? 58 : 40) : 0;
+    const showTitle = s.showTitle !== false && project.title;
+    const titleH = showTitle ? (project.subtitle ? 58 : 40) : 0;
     const headerH = 58;
     const laneIdx = new Map(lanes.map((l, i) => [l.addr, i]));
     // A lane whose rows loop back to itself needs room to the right for the loop and its label.
@@ -137,15 +155,17 @@
     const rowsBottom = y;
     const legendProtos = s.showLegend ? built.protosPresent : [];
     const legendH = legendProtos.length > 1 ? 34 : 0;
-    const height = rowsBottom + 12 + legendH + pad;
+    const capLines = project.caption ? wrap(project.caption, fs, width - pad * 2, 8) : [];
+    const capH = capLines.length ? capLines.length * (fs + 4) + 12 : 0;
+    const height = rowsBottom + 12 + legendH + capH + pad;
 
     const emptyMsg = events.length ? null : (built.total ? 'No events match the current filters or time window.' : 'No packets yet — open a capture or add events in the Add tab.');
     if (emptyMsg) width = Math.max(width, measure(emptyMsg, 13) + pad * 4);
     const svg = el('svg', { xmlns: NS, width, height, viewBox: `0 0 ${width} ${height}`, 'font-family': FONT, 'data-view': 'ladder' });
-    svg.appendChild(el('rect', { x: 0, y: 0, width, height, fill: theme.surface, rx: 0 }));
+    if (!s.transparentBg) svg.appendChild(el('rect', { x: 0, y: 0, width, height, fill: theme.surface, rx: 0 }));
 
     // ----- title -----
-    if (project.title) {
+    if (showTitle) {
       svg.appendChild(text(pad, pad + 18, project.title, { fill: theme.ink, size: 18, weight: 600 }));
       if (project.subtitle) svg.appendChild(text(pad, pad + 38, project.subtitle, { fill: theme.ink2, size: 12 }));
     }
@@ -187,16 +207,16 @@
       g.appendChild(el('rect', { class: 'rowbg', x: pad + 2, y: r.y, width: width - pad * 2 - 4, height: r.h, rx: 4, fill: sel ? theme.select : 'transparent' }));
       g.setAttribute('data-y0', r.y); g.setAttribute('data-y1', r.y + r.h);
       // time
-      if (s.timeMode !== 'none') g.appendChild(text(pad + timeCol - 12, cy + 1, Model.fmtTime(ev.t, s.timeMode, built.t0, r.prevT), { fill: theme.muted, size: 11, anchor: 'end', tabular: true }));
+      if (s.timeMode !== 'none') g.appendChild(text(pad + timeCol - 12, cy + 1, Model.fmtTime(ev.t, s.timeMode, built.t0, r.prevT, s.timeUnit), { fill: theme.muted, size: Math.min(11, fs), anchor: 'end', tabular: true }));
       const si = laneIdx.get(ev.src), di = laneIdx.get(ev.dst);
       if (si === undefined || di === undefined) { gRows.appendChild(g); continue; }
       const x1 = laneX(si), x2 = laneX(di);
       const twoWay = ev.kind === 'flow' || ev.kind === 'conversation';
-      const dashed = ev.hidden ? '6 4' : null;
+      const dashed = ev.hidden ? '6 4' : dashFor(s, ev);
       if (x1 === x2) {
         // self-loop
-        g.appendChild(el('path', { d: `M${x1},${cy - 7} C${x1 + 44},${cy - 7} ${x1 + 44},${cy + 7} ${x1 + 6},${cy + 7}`, fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-dasharray': dashed }));
-        g.appendChild(el('polygon', { points: `${x1},${cy + 7} ${x1 + 9},${cy + 2.5} ${x1 + 9},${cy + 11.5}`, fill: color }));
+        g.appendChild(el('path', { d: `M${x1},${cy - 7} C${x1 + 44},${cy - 7} ${x1 + 44},${cy + 7} ${x1 + head - 3},${cy + 7}`, fill: 'none', stroke: color, 'stroke-width': sw, 'stroke-linecap': 'round', 'stroke-dasharray': dashed }));
+        g.appendChild(el('polygon', { points: `${x1},${cy + 7} ${x1 + head},${cy + 7 - hh} ${x1 + head},${cy + 7 + hh}`, fill: color }));
         const availSelf = (si + 1 < lanes.length ? laneX(si + 1) - x1 : Math.max(laneGap, selfNeed[si])) - 70;
         g.appendChild(text(x1 + 52, cy - 2, truncate(ev.label, fs, availSelf), { fill: theme.ink, size: fs }));
         const subSelf = [];
@@ -206,16 +226,15 @@
         if (subSelf.length) g.appendChild(text(x1 + 52, cy + 12, truncate(subSelf.join(' · '), 10, availSelf), { fill: theme.muted, size: 10 }));
       } else {
         const dir = x2 > x1 ? 1 : -1;
-        const head = 9;
-        g.appendChild(el('line', { x1: x1 + (twoWay ? dir * head : 0), y1: cy, x2: x2 - dir * head, y2: cy, stroke: color, 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-dasharray': dashed }));
-        g.appendChild(el('polygon', { points: `${x2},${cy} ${x2 - dir * head},${cy - 4.5} ${x2 - dir * head},${cy + 4.5}`, fill: color }));
-        if (twoWay) g.appendChild(el('polygon', { points: `${x1},${cy} ${x1 + dir * head},${cy - 4.5} ${x1 + dir * head},${cy + 4.5}`, fill: color }));
+        g.appendChild(el('line', { x1: x1 + (twoWay ? dir * head : 0), y1: cy, x2: x2 - dir * head, y2: cy, stroke: color, 'stroke-width': sw, 'stroke-linecap': 'round', 'stroke-dasharray': dashed }));
+        g.appendChild(el('polygon', { points: `${x2},${cy} ${x2 - dir * head},${cy - hh} ${x2 - dir * head},${cy + hh}`, fill: color }));
+        if (twoWay) g.appendChild(el('polygon', { points: `${x1},${cy} ${x1 + dir * head},${cy - hh} ${x1 + dir * head},${cy + hh}`, fill: color }));
         const mid = (x1 + x2) / 2, avail = Math.abs(x2 - x1) - 28;
         g.appendChild(text(mid, cy - 6, truncate(ev.label, fs, avail), { fill: theme.ink, size: fs, anchor: 'middle' }));
         const sub = [];
         if (s.showBytes && ev.kind !== 'flow' && ev.kind !== 'conversation') sub.push(Model.fmtBytes(ev.bytes));
         if (ev.nPackets > 1 && ev.kind === 'message') sub.push(ev.nPackets + ' pkts');
-        if (sub.length) g.appendChild(text(mid, cy + 13, truncate(sub.join(' · '), 10, avail), { fill: theme.muted, size: 10, anchor: 'middle' }));
+        if (sub.length) g.appendChild(text(mid, cy + 13, truncate(sub.join(' · '), Math.min(10, fs - 1), avail), { fill: theme.muted, size: Math.min(10, fs - 1), anchor: 'middle' }));
         if (s.showPorts && ev.srcPort != null) {
           g.appendChild(text(x1 + dir * 6, cy + 13, ':' + ev.srcPort, { fill: theme.muted, size: 10, anchor: dir > 0 ? 'start' : 'end' }));
           g.appendChild(text(x2 - dir * 12, cy + 13, ':' + ev.dstPort, { fill: theme.muted, size: 10, anchor: dir > 0 ? 'end' : 'start' }));
@@ -236,17 +255,25 @@
 
     if (emptyMsg) svg.appendChild(text(width / 2, top + 40, emptyMsg, { fill: theme.muted, size: 13, anchor: 'middle' }));
     if (legendH) drawLegend(svg, project, theme, legendProtos, pad, rowsBottom + 16, width - pad * 2);
+    if (capH) drawCaption(svg, theme, capLines, pad, rowsBottom + 12 + legendH + 10, fs);
     return svg;
+  }
+
+  function drawCaption(svg, theme, lines, x, y, fs) {
+    lines.forEach((ln, i) => svg.appendChild(text(x, y + fs + i * (fs + 4), ln, { fill: theme.ink2, size: fs })));
   }
 
   function drawLegend(svg, project, theme, protos, x0, y0, maxW) {
     const g = el('g', { class: 'legend' });
     let x = x0, y = y0;
+    const s = project.settings; const ls = !!s.lineStyles; const sampleW = ls ? 26 : 12;
     for (const p of protos) {
-      const w = 18 + measure(p, 11) + 18;
+      const w = sampleW + 6 + measure(p, 11) + 18;
       if (x + w > x0 + maxW && x > x0) { x = x0; y += 18; }
-      g.appendChild(el('rect', { x, y, width: 12, height: 12, rx: 3, fill: protoColor(project, theme, p) }));
-      g.appendChild(text(x + 17, y + 10, p, { fill: theme.ink2, size: 11 }));
+      const color = protoColor(project, theme, p);
+      if (ls) g.appendChild(el('line', { x1: x, y1: y + 6, x2: x + sampleW, y2: y + 6, stroke: color, 'stroke-width': s.strokeWidth || 2, 'stroke-linecap': 'round', 'stroke-dasharray': dashFor(s, { proto: p }) }));
+      else g.appendChild(el('rect', { x, y, width: 12, height: 12, rx: 3, fill: color }));
+      g.appendChild(text(x + sampleW + 5, y + 10, p, { fill: theme.ink2, size: 11 }));
       x += w;
     }
     svg.appendChild(g);
@@ -262,11 +289,12 @@
   }
 
   function renderTimeline(project, built, opts) {
-    const s = project.settings; const theme = THEMES[s.theme] || THEMES.light;
-    const fs = s.fontSize || 12; const pad = 24;
+    const s = project.settings; const theme = themeFor(s); FONT = fontFor(s);
+    const fs = s.fontSize || 12; const pad = s.style === 'paper' ? 12 : 24;
     const events = built.events;
     const labelW = 250;
-    const titleH = project.title ? (project.subtitle ? 58 : 40) : 0;
+    const showTitle = s.showTitle !== false && project.title;
+    const titleH = showTitle ? (project.subtitle ? 58 : 40) : 0;
     const axisH = 36;
     const rowH = Math.max(18, Math.min(40, s.rowHeight || 34) - 6);
     const width = Math.max(600, s.timelineWidth || 1100);
@@ -274,15 +302,17 @@
     const top = pad + titleH + axisH;
     const legendProtos = s.showLegend ? built.protosPresent : [];
     const legendH = legendProtos.length > 1 ? 34 : 0;
-    const height = top + events.length * rowH + 12 + legendH + pad;
+    const capLines = project.caption ? wrap(project.caption, fs, width - pad * 2, 8) : [];
+    const capH = capLines.length ? capLines.length * (fs + 4) + 12 : 0;
+    const height = top + events.length * rowH + 12 + legendH + capH + pad;
     const tMin = events.length ? Math.min(...events.map(e => e.t)) : 0;
     const tMax = events.length ? Math.max(...events.map(e => e.tEnd)) : 1;
     const span = Math.max(tMax - tMin, 1e-6);
     const x = (t) => plotX + ((t - tMin) / span) * (plotW - 8) + 4;
 
     const svg = el('svg', { xmlns: NS, width, height, viewBox: `0 0 ${width} ${height}`, 'font-family': FONT, 'data-view': 'timeline', 'data-plotx': plotX, 'data-plotw': plotW, 'data-tmin': tMin, 'data-span': span });
-    svg.appendChild(el('rect', { x: 0, y: 0, width, height, fill: theme.surface }));
-    if (project.title) {
+    if (!s.transparentBg) svg.appendChild(el('rect', { x: 0, y: 0, width, height, fill: theme.surface }));
+    if (showTitle) {
       svg.appendChild(text(pad, pad + 18, project.title, { fill: theme.ink, size: 18, weight: 600 }));
       if (project.subtitle) svg.appendChild(text(pad, pad + 38, project.subtitle, { fill: theme.ink2, size: 12 }));
     }
@@ -315,7 +345,7 @@
       g.appendChild(text(pad + 16, cy + 4, truncate(rowLabel, 11.5, labelW - 28), { fill: theme.ink2, size: 11.5 }));
       const bx1 = x(ev.t), bx2 = Math.max(x(ev.tEnd), bx1 + 4);
       const barH = Math.min(14, rowH - 6);
-      g.appendChild(el('rect', { x: bx1, y: cy - barH / 2, width: bx2 - bx1, height: barH, rx: 3, fill: color, 'stroke-dasharray': ev.hidden ? '4 3' : null }));
+      g.appendChild(el('rect', { x: bx1, y: cy - barH / 2, width: bx2 - bx1, height: barH, rx: 3, fill: color, stroke: s.lineStyles ? theme.ink : null, 'stroke-width': s.lineStyles ? 0.75 : null, 'stroke-dasharray': ev.hidden ? '4 3' : dashFor(s, ev) }));
       let label = ev.label;
       if (s.showBytes && !twoWay) label += ` (${Model.fmtBytes(ev.bytes)})`;
       if (ev.comment) label += `  —  ${ev.comment.replace(/\s+/g, ' ')}`;
@@ -327,6 +357,7 @@
     svg.appendChild(gRows);
     if (!events.length) svg.appendChild(text(width / 2, top + 40, built.total ? 'No events match the current filters or time window.' : 'No packets yet — open a capture or add events in the Add tab.', { fill: theme.muted, size: 13, anchor: 'middle' }));
     if (legendH) drawLegend(svg, project, theme, legendProtos, pad, top + events.length * rowH + 16, width - pad * 2);
+    if (capH) drawCaption(svg, theme, capLines, pad, top + events.length * rowH + 12 + legendH + 10, fs);
     return svg;
   }
 
@@ -335,22 +366,28 @@
     return project.settings.view === 'timeline' ? renderTimeline(project, built, opts) : renderLadder(project, built, opts);
   }
 
-  function svgString(svg) {
+  // widthIn (optional): emit physical width/height in inches so the SVG drops into a paper column at the right size.
+  function svgString(svg, widthIn) {
     const clone = svg.cloneNode(true);
     clone.setAttribute('xmlns', NS);
+    clone.removeAttribute('style');
     for (const r of clone.querySelectorAll('rect.rowbg, rect.range-rect')) r.remove();
+    const vb = svg.viewBox.baseVal;
+    if (widthIn) { clone.setAttribute('width', widthIn.toFixed(3) + 'in'); clone.setAttribute('height', (widthIn * vb.height / vb.width).toFixed(3) + 'in'); }
+    else { clone.setAttribute('width', vb.width); clone.setAttribute('height', vb.height); }
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(clone);
   }
 
   function svgToPng(svg, scale) {
     return new Promise((resolve, reject) => {
-      const str = svgString(svg);
+      const str = svgString(svg, null);
       const blob = new Blob([str], { type: 'image/svg+xml;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const img = new Image();
       img.onload = () => {
         const c = document.createElement('canvas');
-        c.width = Math.ceil(svg.width.baseVal.value * scale); c.height = Math.ceil(svg.height.baseVal.value * scale);
+        const vb = svg.viewBox.baseVal;
+        c.width = Math.ceil(vb.width * scale); c.height = Math.ceil(vb.height * scale);
         const g = c.getContext('2d'); g.scale(scale, scale); g.drawImage(img, 0, 0);
         URL.revokeObjectURL(url);
         c.toBlob(b => b ? resolve(b) : reject(new Error('PNG encode failed')), 'image/png');
@@ -360,5 +397,5 @@
     });
   }
 
-  window.Render = { render, svgString, svgToPng, THEMES, colorFor, protoColor, FAMILY_OF };
+  window.Render = { render, svgString, svgToPng, THEMES, colorFor, protoColor, FAMILY_OF, DASH };
 })();

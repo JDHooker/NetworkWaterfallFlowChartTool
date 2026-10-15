@@ -64,6 +64,35 @@
         <label><input type="checkbox" data-setting="autoWiden"> Widen lanes so labels fit (lane spacing becomes a minimum)</label>
       </div>
 
+      <details><summary>Paper figure</summary>
+        <div class="field"><label>Style</label>
+          <div class="seg" data-setting="style"><button data-v="screen">Screen</button><button data-v="paper">Paper</button></div>
+          <p class="hint">Paper applies a print preset: black ink on white, serif, greyscale + line styles, no title, tighter rows, times in ms. Fine-tune below.</p></div>
+        <div class="field"><label>Font</label>
+          <div class="seg" data-setting="fontFamily"><button data-v="sans">Sans</button><button data-v="serif">Serif</button><button data-v="mono">Mono</button></div></div>
+        <div class="field"><label>Colours</label>
+          <div class="seg" data-setting="colorMode"><button data-v="color">Colour</button><button data-v="grey">Greyscale</button><button data-v="mono">Black</button></div></div>
+        <div class="field"><label>Time unit</label>
+          <div class="seg" data-setting="timeUnit"><button data-v="auto">Auto</button><button data-v="s">s</button><button data-v="ms">ms</button><button data-v="us">µs</button></div></div>
+        <div class="checks">
+          <label><input type="checkbox" data-setting="lineStyles"> Line style per protocol (dashes, for B&amp;W print)</label>
+          <label><input type="checkbox" data-setting="showTitle"> Title inside the figure</label>
+          <label><input type="checkbox" data-setting="transparentBg"> Transparent background</label>
+        </div>
+        <div class="grid2">
+          <label>Line weight<input type="number" min="0.5" max="6" step="0.25" data-setting="strokeWidth"></label>
+          <label>Figure width (in)<input type="number" min="1" max="20" step="0.01" data-setting="figWidthIn" placeholder="native"></label>
+          <label>PNG resolution (dpi)<input type="number" min="72" max="1200" step="1" data-setting="exportDpi"></label>
+        </div>
+        <div class="row-buttons">
+          <button class="small" data-figw="3.5">Single column 3.5″</button>
+          <button class="small" data-figw="7.16">Double column 7.16″</button>
+          <button class="small" data-figw="">Native</button>
+        </div>
+        <label class="block">Caption (drawn under the figure; leave empty if your paper supplies it)<textarea id="caption" rows="2" placeholder="Fig. 1. TLS 1.3 handshake between the client and example.com…"></textarea></label>
+        <div class="row-buttons"><button id="btnExportPdf" class="small">Export PDF (print dialog)</button><span class="hint" style="margin:0">Choose “Save as PDF”; page size equals the figure.</span></div>
+      </details>
+
       <details open><summary>Protocols</summary>
         <div id="protoList" class="proto-list"></div>
       </details>
