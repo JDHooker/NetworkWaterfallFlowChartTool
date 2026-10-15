@@ -57,6 +57,7 @@
     state.selectedId = null; state.dirty = false; state.zoom = 1;
     $('#title').value = project.title || '';
     $('#subtitle').value = project.subtitle || '';
+    $('#caption').value = project.caption || '';
     $('#filter').value = project.settings.filter || '';
     syncSettingsUI();
     rerender();
@@ -335,6 +336,17 @@
   }
   function markDirty() { state.dirty = true; }
 
+  // Paper preset: remembers the screen values so switching back restores them.
+  const PAPER_PRESET = { showTitle: false, fontFamily: 'serif', fontSize: 9, rowHeight: 24, laneGap: 170, strokeWidth: 1.2, colorMode: 'grey', lineStyles: true, showBytes: false, showLegend: true, notesWidth: 170, timeUnit: 'ms', theme: 'light' };
+  function applyStylePreset(style) {
+    const s = state.project.settings;
+    if (style === 'paper') {
+      s.screenBackup = {}; for (const k in PAPER_PRESET) s.screenBackup[k] = s[k];
+      Object.assign(s, PAPER_PRESET);
+    } else if (s.screenBackup) { Object.assign(s, s.screenBackup); delete s.screenBackup; }
+    s.style = style;
+  }
+
   // =========================== side panels ===========================
   function syncSettingsUI() {
     const s = state.project.settings;
@@ -541,15 +553,41 @@
     $('#fileProject').addEventListener('change', async (e) => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; try { loadProjectText(await f.text(), f.name); } catch (err) { toast('Could not open project: ' + err.message, true); } });
     $('#btnSaveProject').addEventListener('click', () => { download(new Blob([serializeProject()], { type: 'application/json' }), safeName() + '.waterfall.json'); state.dirty = false; toast('Project saved.'); });
     $('#btnNew').addEventListener('click', newBlank);
-    $('#btnExportSvg').addEventListener('click', () => download(new Blob([Render.svgString(state.svg)], { type: 'image/svg+xml' }), safeName() + '.svg'));
-    $('#btnExportPng').addEventListener('click', async () => { try { download(await Render.svgToPng(state.svg, 2), safeName() + '.png'); } catch (e) { toast(e.message, true); } });
+    $('#btnExportSvg').addEventListener('click', () => download(new Blob([Render.svgString(state.svg, state.project.settings.figWidthIn || null)], { type: 'image/svg+xml' }), safeName() + '.svg'));
+    $('#btnExportPng').addEventListener('click', async () => {
+      try {
+        const s = state.project.settings; const vbW = state.svg.viewBox.baseVal.width;
+        const dpi = s.exportDpi || 300;
+        const scale = s.figWidthIn ? (s.figWidthIn * dpi) / vbW : (s.style === 'paper' ? dpi / 96 : 2);
+        download(await Render.svgToPng(state.svg, scale), safeName() + '.png');
+        toast(`PNG exported at ${Math.round(vbW * scale)} px wide${s.figWidthIn ? ` (${s.figWidthIn}″ at ${dpi} dpi)` : ''}.`);
+      } catch (e) { toast(e.message, true); }
+    });
+    $('#btnExportPdf').addEventListener('click', () => {
+      if (!state.svg) return;
+      const s = state.project.settings; const vb = state.svg.viewBox.baseVal;
+      const wIn = s.figWidthIn || vb.width / 96, hIn = wIn * vb.height / vb.width;
+      const svgText = Render.svgString(state.svg, wIn).replace(/^<\?xml[^>]*>\n?/, '');
+      const w = window.open('', '_blank');
+      if (!w) { toast('The browser blocked the print window. Allow pop-ups for this page and try again.', true); return; }
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${safeName()}</title><style>@page{size:${wIn.toFixed(3)}in ${hIn.toFixed(3)}in;margin:0}html,body{margin:0;padding:0;background:#fff}svg{display:block;width:${wIn.toFixed(3)}in;height:${hIn.toFixed(3)}in}</style></head><body>${svgText}<script>setTimeout(function(){window.print();},300);<\/script></body></html>`);
+      w.document.close();
+    });
+    $('#caption').addEventListener('input', (e) => { state.project.caption = e.target.value; markDirty(); scheduleRender(); });
+    for (const b of $$('[data-figw]')) b.addEventListener('click', () => { state.project.settings.figWidthIn = b.dataset.figw ? parseFloat(b.dataset.figw) : null; markDirty(); syncSettingsUI(); toast(b.dataset.figw ? `Exports will be ${b.dataset.figw} inches wide.` : 'Exports use native pixel size.'); });
     $('#btnTheme').addEventListener('click', () => { const next = currentTheme() === 'dark' ? 'light' : 'dark'; document.documentElement.setAttribute('data-theme', next); state.project.settings.theme = next; try { localStorage.setItem('wf-theme', next); } catch (e) { } syncSettingsUI(); rerender(); });
 
     $('#title').addEventListener('input', (e) => { state.project.title = e.target.value; markDirty(); scheduleRender(); });
     $('#subtitle').addEventListener('input', (e) => { state.project.subtitle = e.target.value; markDirty(); scheduleRender(); });
     $('#filter').addEventListener('input', (e) => { state.project.settings.filter = e.target.value; state.project.settings.offset = 0; scheduleRender(); });
 
-    for (const seg of $$('.seg[data-setting]')) seg.addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; state.project.settings[seg.dataset.setting] = b.dataset.v; state.project.settings.offset = 0; markDirty(); syncSettingsUI(); rerender(); });
+    for (const seg of $$('.seg[data-setting]')) seg.addEventListener('click', (e) => {
+      const b = e.target.closest('button'); if (!b) return;
+      const key = seg.dataset.setting, val = b.dataset.v, s = state.project.settings;
+      if (key === 'style') { if (val !== s.style) applyStylePreset(val); }
+      else { s[key] = val; }
+      s.offset = 0; markDirty(); syncSettingsUI(); rerender();
+    });
     for (const inp of $$('input[data-setting]')) {
       inp.addEventListener(inp.type === 'checkbox' ? 'change' : 'input', (e) => {
         const key = inp.dataset.setting; const s = state.project.settings;
@@ -663,6 +701,7 @@
       for (const [k, v] of q) {
         if (k === 'load') continue;
         if (k === 'theme') { document.documentElement.setAttribute('data-theme', v); s.theme = v; continue; }
+        if (k === 'style') { if (v !== s.style) applyStylePreset(v); continue; }
         if (k in s) { s[k] = typeof s[k] === 'boolean' ? (v === '1' || v === 'true') : typeof s[k] === 'number' || s[k] === null ? (v === '' ? null : Number(v)) : v; }
       }
       $('#filter').value = s.filter || ''; syncSettingsUI(); rerender();

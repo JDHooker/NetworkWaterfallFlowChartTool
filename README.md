@@ -75,6 +75,28 @@ Anything else is shown as its transport or EtherType.
   **Fit lanes to window**; even or time-scaled row spacing; relative / clock / delta time labels.
 * **Zoom** controls in the chart toolbar only affect the screen; exports are always full size.
 
+## Making a figure for a paper
+
+Open **Paper figure** in the Chart tab and switch **Style** to *Paper*. That applies a print preset in
+one go: black ink on a white surface, serif type at 9 pt, greyscale protocol shades with a distinct
+dash pattern per protocol (so the figure still reads when printed in black and white), thinner
+arrows, tighter rows, no title inside the figure, and times in milliseconds. Switching back to
+*Screen* restores your previous settings. Every part of the preset is also an individual control:
+
+* **Font** sans / serif / mono, **Colours** colour / greyscale / black, **Line style per protocol**,
+  **Line weight**, **Time unit** (auto, s, ms, µs), **Title inside the figure**, **Transparent
+  background**.
+* **Figure width** in inches, with presets for a single (3.5″) and double (7.16″) column. Export SVG
+  then carries a physical size so it drops into LaTeX or Word at the right scale; Export PNG renders
+  at that width and the chosen **dpi** (300 by default, 600 for print-quality raster).
+* **Caption** is drawn under the figure if you want it inside the image; leave it empty when the paper
+  supplies the caption.
+* **Export PDF** opens the browser print dialog with a page exactly the size of the figure; choose
+  "Save as PDF" to get a vector PDF for `\includegraphics`.
+
+Hide the size labels and the comments column, crop to the time range you discuss, and rename hosts to
+their roles ("Client", "Server") for the cleanest result.
+
 ## Drawing a diagram from scratch
 
 Click **New blank**, then use the **Add** tab:
@@ -110,7 +132,7 @@ without the original capture. Nothing ever leaves the browser.
 
 If you serve the folder over HTTP (e.g. `python3 -m http.server`), URL parameters work:
 `index.html?load=samples/sample.pcap&granularity=message&view=timeline&theme=dark&hideAcks=1&laneBy=port`.
-Any setting name from the Chart tab can be passed this way.
+Any setting name from the Chart tab can be passed this way, including `style=paper`.
 
 ## Limits
 
