@@ -158,6 +158,7 @@
   function scheduleRender() { clearTimeout(renderTimer); renderTimer = setTimeout(rerender, 120); }
 
   function rerender() {
+    if (state.rangeSel) hideRangePop();
     const project = state.project;
     const built = Model.build(project);
     state.built = built;
@@ -169,8 +170,14 @@
     applyZoom();
     scroll.scrollLeft = sx; scroll.scrollTop = sy;
     bindSvg(svg);
-    $('#chartArea').classList.toggle('empty', project.packets.length === 0);
+    const isEmpty = project.packets.length === 0;
+    $('#chartArea').classList.toggle('empty', isEmpty);
+    $('#welcome').hidden = !isEmpty;
+    $('#btnExportSvg').disabled = isEmpty; $('#btnExportPng').disabled = isEmpty;
     const s = project.settings;
+    const cropped = s.timeFrom != null || s.timeTo != null;
+    $('#cropInfo').hidden = !cropped;
+    if (cropped) $('#cropText').textContent = `Cropped to ${s.timeFrom != null ? s.timeFrom.toFixed(3) : 'start'} – ${s.timeTo != null ? s.timeTo.toFixed(3) : 'end'} s`;
     const from = built.matched ? built.offset + 1 : 0, to = Math.min(built.matched, built.offset + built.limit);
     $('#status').textContent = `${from.toLocaleString()}–${to.toLocaleString()} of ${built.matched.toLocaleString()} ${s.granularity === 'conversation' ? 'host pairs' : s.granularity + 's'}` + (built.total !== built.matched ? ` (${(built.total - built.matched).toLocaleString()} filtered)` : '') + ` · ${built.packetCount.toLocaleString()} packets`;
     $('#pagePrev').disabled = built.offset <= 0; $('#pageNext').disabled = to >= built.matched;
@@ -197,13 +204,96 @@
       tip.style.left = x + 'px'; tip.style.top = y + 'px';
     });
     svg.addEventListener('mouseleave', () => { tip.hidden = true; });
+    // ---- drag to select a range of rows ----
+    let drag = null;
+    const toSvg = (e) => { const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; return pt.matrixTransform(svg.getScreenCTM().inverse()); };
+    svg.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || e.target.closest('.lane')) return;
+      hideRangePop();
+      const p = toSvg(e);
+      drag = { x0: p.x, y0: p.y, cx: e.clientX, cy: e.clientY, active: false, rect: null, id: e.pointerId };
+    });
+    svg.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      if (!drag.active) {
+        if (Math.hypot(e.clientX - drag.cx, e.clientY - drag.cy) < 5) return;
+        drag.active = true; svg.setPointerCapture(drag.id); svg.classList.add('selecting'); tip.hidden = true;
+        drag.rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        drag.rect.setAttribute('class', 'range-rect'); drag.rect.setAttribute('fill', Render.THEMES[state.project.settings.theme].select); drag.rect.setAttribute('stroke', 'var(--accent)'); drag.rect.setAttribute('stroke-width', '1'); drag.rect.setAttribute('rx', '4');
+        svg.appendChild(drag.rect);
+      }
+      const p = toSvg(e); updateDragRect(svg, drag, p);
+    });
+    const finish = (e) => {
+      if (!drag) return;
+      const d = drag; drag = null;
+      if (!d.active) return;
+      svg.classList.remove('selecting');
+      try { svg.releasePointerCapture(d.id); } catch (err) { }
+      const p = toSvg(e);
+      const box = updateDragRect(svg, d, p);
+      const ids = rowsInBox(svg, box);
+      state.justDragged = true; setTimeout(() => { state.justDragged = false; }, 0);
+      if (!ids.length) { d.rect.remove(); return; }
+      showRangePop(ids, d.rect, e.clientX, e.clientY);
+    };
+    svg.addEventListener('pointerup', finish);
+    svg.addEventListener('pointercancel', () => { if (drag && drag.rect) drag.rect.remove(); drag = null; svg.classList.remove('selecting'); });
+
     svg.addEventListener('click', (e) => {
+      if (state.justDragged) return;
       const row = e.target.closest('.row');
       if (row) { select(row.getAttribute('data-id')); return; }
       const lane = e.target.closest('.lane');
       if (lane) { showTab('hosts'); const inp = $(`#hostList [data-addr="${CSS.escape(lane.getAttribute('data-host'))}"] input[type=text]`); if (inp) { inp.focus(); inp.select(); } return; }
       select(null);
     });
+  }
+
+  function updateDragRect(svg, d, p) {
+    const vertical = svg.getAttribute('data-view') !== 'timeline';
+    const vb = svg.viewBox.baseVal;
+    let box;
+    if (vertical) box = { x: 0, y: Math.min(d.y0, p.y), w: vb.width, h: Math.abs(p.y - d.y0) };
+    else {
+      const px = parseFloat(svg.getAttribute('data-plotx')), pw = parseFloat(svg.getAttribute('data-plotw'));
+      const x0 = Math.max(px, Math.min(px + pw, d.x0)), x1 = Math.max(px, Math.min(px + pw, p.x));
+      box = { x: Math.min(x0, x1), y: 0, w: Math.abs(x1 - x0), h: vb.height };
+    }
+    d.rect.setAttribute('x', box.x); d.rect.setAttribute('y', box.y); d.rect.setAttribute('width', Math.max(1, box.w)); d.rect.setAttribute('height', Math.max(1, box.h));
+    return box;
+  }
+  // Rows whose band (ladder) or time span (timeline) intersects the dragged box.
+  function rowsInBox(svg, box) {
+    const ids = [];
+    if (svg.getAttribute('data-view') !== 'timeline') {
+      for (const g of svg.querySelectorAll('.row')) { const y0 = +g.getAttribute('data-y0'), y1 = +g.getAttribute('data-y1'); if (y1 > box.y && y0 < box.y + box.h) ids.push(g.getAttribute('data-id')); }
+    } else {
+      const px = parseFloat(svg.getAttribute('data-plotx')), pw = parseFloat(svg.getAttribute('data-plotw')), tmin = parseFloat(svg.getAttribute('data-tmin')), span = parseFloat(svg.getAttribute('data-span'));
+      const tA = tmin + ((box.x - px) / pw) * span, tB = tmin + ((box.x + box.w - px) / pw) * span;
+      for (const ev of state.built.events) if (ev.tEnd >= tA && ev.t <= tB) ids.push(ev.id);
+    }
+    return ids;
+  }
+  function showRangePop(ids, rect, cx, cy) {
+    const evs = ids.map(findEvent).filter(Boolean);
+    const tA = Math.min(...evs.map(e => e.t)), tB = Math.max(...evs.map(e => e.tEnd));
+    state.rangeSel = { ids, rect, tA, tB };
+    const pop = $('#rangePop');
+    $('#rangePopTitle').textContent = `${evs.length} row${evs.length > 1 ? 's' : ''} · ${(tA - state.built.t0).toFixed(3)} – ${(tB - state.built.t0).toFixed(3)} s`;
+    pop.hidden = false;
+    pop.style.left = Math.min(cx + 12, window.innerWidth - pop.offsetWidth - 12) + 'px';
+    pop.style.top = Math.min(cy + 12, window.innerHeight - pop.offsetHeight - 12) + 'px';
+  }
+  function hideRangePop() {
+    const r = state.rangeSel; state.rangeSel = null;
+    if (r && r.rect) r.rect.remove();
+    $('#rangePop').hidden = true;
+  }
+  function cropToRange(tA, tB) {
+    const s = state.project.settings; const t0 = state.built.t0;
+    s.timeFrom = Math.max(0, +(tA - t0 - 0.0000005).toFixed(6)); s.timeTo = +(tB - t0 + 0.0000005).toFixed(6); s.offset = 0;
+    markDirty(); syncSettingsUI(); rerender();
   }
 
   function tooltipContent(ev) {
@@ -282,15 +372,17 @@
   function renderHostList() {
     const project = state.project; const counts = Model.hostStats(project);
     const list = $('#hostList'); list.replaceChildren();
-    const addrs = Object.keys(project.hosts).sort((a, b) => project.hosts[a].order - project.hosts[b].order);
+    const byPort = project.settings.laneBy === 'port';
+    const addrs = Object.keys(project.hosts).filter(a => byPort || project.hosts[a].port == null).sort((a, b) => project.hosts[a].order - project.hosts[b].order);
     if (!addrs.length) { list.appendChild(h('p', { class: 'hint', text: 'No hosts yet. Open a capture or add hosts in the Add tab.' })); return; }
+    if (byPort) list.appendChild(h('p', { class: 'hint', text: 'Per-port lanes are listed with their port. Naming or hiding the plain address applies to all of its ports.' }));
     addrs.forEach((addr, i) => {
       const hst = project.hosts[addr];
       const move = (d) => { const other = addrs[i + d]; if (!other) return; const o = project.hosts[other].order; project.hosts[other].order = hst.order; hst.order = o; normalizeOrder(); markDirty(); rerender(); };
       list.appendChild(h('div', { class: 'host' + (hst.hidden ? ' hidden-host' : ''), 'data-addr': addr },
         h('input', { type: 'color', value: hst.color || '#898781', title: 'Lane colour marker', oninput: (e) => { hst.color = e.target.value; markDirty(); scheduleRender(); } }),
         h('div', {}, h('div', { class: 'addr', text: addr }), h('div', { class: 'meta', text: `${(counts[addr] || 0).toLocaleString()} pkts` })),
-        h('input', { type: 'text', value: hst.name || '', placeholder: 'display name', spellcheck: 'false', oninput: (e) => { hst.name = e.target.value; markDirty(); scheduleRender(); } }),
+        h('input', { type: 'text', value: hst.name || '', placeholder: hst.port != null ? Model.hostName(project, addr) : 'display name', spellcheck: 'false', oninput: (e) => { hst.name = e.target.value; markDirty(); scheduleRender(); } }),
         h('div', { class: 'ctl' },
           h('button', { title: 'Move lane left', text: '◀', disabled: i === 0 ? '' : null, onclick: () => move(-1) }),
           h('button', { title: 'Move lane right', text: '▶', disabled: i === addrs.length - 1 ? '' : null, onclick: () => move(1) }),
@@ -302,7 +394,7 @@
   function normalizeOrder() { const p = state.project; Object.keys(p.hosts).sort((a, b) => p.hosts[a].order - p.hosts[b].order).forEach((a, i) => { p.hosts[a].order = i; }); }
   function orderHosts(mode) {
     const p = state.project; const counts = Model.hostStats(p);
-    const firstSeen = {}; p.packets.slice().sort((a, b) => a.ts - b.ts).forEach((pk, i) => { if (firstSeen[pk.src] === undefined) firstSeen[pk.src] = i; if (firstSeen[pk.dst] === undefined) firstSeen[pk.dst] = i + 0.5; });
+    const firstSeen = {}; p.packets.slice().sort((a, b) => a.ts - b.ts).forEach((pk, i) => { for (const [k, off] of [[pk.src, 0], [Model.laneKey(p, pk.src, pk.srcPort), 0.1], [pk.dst, 0.5], [Model.laneKey(p, pk.dst, pk.dstPort), 0.6]]) if (firstSeen[k] === undefined) firstSeen[k] = i + off; });
     const isLocal = (a) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|fe80:|fd|fc|127\.|::1$|0\.0\.0\.0)/i.test(a);
     const keys = Object.keys(p.hosts);
     const cmp = mode === 'busiest' ? (a, b) => (counts[b] || 0) - (counts[a] || 0)
@@ -470,6 +562,7 @@
     }
     $('#btnFit').addEventListener('click', () => {
       const s = state.project.settings; const n = Math.max(1, state.built.lanes.length);
+      if (s.view === 'timeline') { s.timelineWidth = Math.max(600, $('#chartScroll').clientWidth - 34); state.zoom = 1; markDirty(); syncSettingsUI(); rerender(); return; }
       const avail = $('#chartScroll').clientWidth - 32 - 48 - (s.timeMode === 'none' ? 24 : 124) - (s.showComments && state.built.events.some(e => e.comment) ? 16 + s.notesWidth : 0);
       s.laneGap = Math.max(120, Math.floor(avail / n)); state.zoom = 1; markDirty(); syncSettingsUI(); rerender();
     });
@@ -481,6 +574,13 @@
     $('#btnHostsBusiest').addEventListener('click', () => orderHosts('busiest'));
     $('#eventSearch').addEventListener('input', (e) => { state.eventSearch = e.target.value; renderEventList(); });
 
+    $('#rangeKeep').addEventListener('click', () => { const r = state.rangeSel; hideRangePop(); if (r) { cropToRange(r.tA, r.tB); toast('Cropped to the selected range. Use × in the toolbar to undo.'); } });
+    $('#rangeHide').addEventListener('click', () => { const r = state.rangeSel; hideRangePop(); if (r) { for (const id of r.ids) setAnnot(id, { hidden: true }); if (r.ids.includes(state.selectedId)) state.selectedId = null; rerender(); toast(`${r.ids.length} rows hidden. "Show hidden rows" or "Unhide all rows" brings them back.`); } });
+    $('#rangeCancel').addEventListener('click', hideRangePop);
+    $('#btnClearCrop').addEventListener('click', () => { const s = state.project.settings; s.timeFrom = null; s.timeTo = null; s.offset = 0; markDirty(); syncSettingsUI(); rerender(); });
+    $('#wOpen').addEventListener('click', () => $('#fileCapture').click());
+    $('#wNew').addEventListener('click', newBlank);
+    $('#wProject').addEventListener('click', () => $('#fileProject').click());
     $('#pagePrev').addEventListener('click', () => { const s = state.project.settings; s.offset = Math.max(0, s.offset - s.limit); rerender(); });
     $('#pageNext').addEventListener('click', () => { const s = state.project.settings; s.offset = s.offset + s.limit; rerender(); });
     $('#zoomIn').addEventListener('click', () => { state.zoom = Math.min(3, state.zoom * 1.2); applyZoom(); });
@@ -531,7 +631,7 @@
       if (tag === 'input' || tag === 'textarea' || tag === 'select') { if (e.key === 'Escape') e.target.blur(); return; }
       if (!state.built) return;
       const evs = state.built.events; const i = evs.findIndex(x => x.id === state.selectedId);
-      if (e.key === 'Escape') select(null);
+      if (e.key === 'Escape') { if (state.rangeSel) hideRangePop(); else select(null); }
       else if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedId) { e.preventDefault(); const ev = findEvent(state.selectedId); setAnnot(ev.id, { hidden: !ev.hidden }); const next = evs[i + 1] || evs[i - 1]; state.selectedId = state.project.settings.showHidden ? ev.id : (next ? next.id : null); rerender(); }
       else if (e.key === 'ArrowDown' && evs.length) { e.preventDefault(); const n = evs[Math.min(evs.length - 1, i + 1)]; select(n.id); scrollRowIntoView(n.id); }
       else if (e.key === 'ArrowUp' && evs.length) { e.preventDefault(); const n = evs[Math.max(0, i - 1)]; select(n.id); scrollRowIntoView(n.id); }

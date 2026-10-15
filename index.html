@@ -41,6 +41,9 @@
       <div class="field"><label>Granularity</label>
         <div class="seg" data-setting="granularity"><button data-v="packet">Packet</button><button data-v="message">Message</button><button data-v="flow">Flow</button><button data-v="conversation">Hosts</button></div>
         <p class="hint" id="granHint"></p></div>
+      <div class="field"><label>Lanes</label>
+        <div class="seg" data-setting="laneBy"><button data-v="host">One per host</button><button data-v="port">One per host : port</button></div>
+        <p class="hint">Per-port lanes turn loopback traffic (127.0.0.1:aaa ⇄ 127.0.0.1:bbb) into an exchange between two lanes.</p></div>
       <div class="field"><label>Row spacing</label>
         <div class="seg" data-setting="layout"><button data-v="even">Even</button><button data-v="scaled">Time-scaled</button></div></div>
       <div class="field"><label>Time labels</label>
@@ -58,6 +61,7 @@
         <label><input type="checkbox" data-setting="showPorts"> Show ports</label>
         <label><input type="checkbox" data-setting="showLegend"> Legend</label>
         <label><input type="checkbox" data-setting="hideUnusedLanes"> Hide lanes with no visible traffic</label>
+        <label><input type="checkbox" data-setting="autoWiden"> Widen lanes so labels fit (lane spacing becomes a minimum)</label>
       </div>
 
       <details open><summary>Protocols</summary>
@@ -76,7 +80,7 @@
 
       <details><summary>Sizing &amp; text</summary>
         <div class="grid2">
-          <label>Lane spacing<input type="number" min="120" max="800" data-setting="laneGap"></label>
+          <label>Lane spacing (min)<input type="number" min="120" max="800" data-setting="laneGap"></label>
           <label>Row height<input type="number" min="18" max="120" data-setting="rowHeight"></label>
           <label>Font size<input type="number" min="9" max="20" data-setting="fontSize"></label>
           <label>Notes width<input type="number" min="140" max="600" data-setting="notesWidth"></label>
@@ -152,7 +156,9 @@
   <section class="chart-area" id="chartArea">
     <div class="chart-toolbar">
       <span id="status" class="status"></span>
+      <span id="cropInfo" class="chip" hidden><span id="cropText"></span><button id="btnClearCrop" class="chip-x" title="Show the whole capture again">×</button></span>
       <span class="spacer"></span>
+      <span class="hint-inline">drag over rows to crop or hide</span>
       <button id="pagePrev" class="small" title="Previous page">◀</button>
       <button id="pageNext" class="small" title="Next page">▶</button>
       <span class="sep"></span>
@@ -162,7 +168,30 @@
       <button id="zoomReset" class="small">Reset</button>
     </div>
     <div class="chart-scroll" id="chartScroll"></div>
-    <div class="dropzone" id="dropzone"><div><strong>Drop a capture here</strong><br><span>.pcap or .pcapng — parsed entirely in your browser; nothing is uploaded</span></div></div>
+    <div class="welcome" id="welcome" hidden>
+      <div class="welcome-card">
+        <h2>Draw a waterfall of network traffic</h2>
+        <p>Drop a <strong>.pcap</strong> or <strong>.pcapng</strong> anywhere on this page, or build a diagram by hand. Files are read in your browser and never uploaded.</p>
+        <div class="welcome-actions">
+          <button class="primary" id="wOpen">Open a capture…</button>
+          <button id="wNew">Start from scratch</button>
+          <button id="wProject">Open a saved project…</button>
+        </div>
+        <ul class="welcome-tips">
+          <li><strong>Granularity</strong> switches between packets, messages, flows and host pairs.</li>
+          <li><strong>Click</strong> a row to rename it, comment on it, recolour or hide it. <strong>Drag</strong> over rows to keep only that range or hide it.</li>
+          <li><strong>Hosts</strong> tab renames lanes; <strong>Lanes</strong> can be one per host or one per host:port.</li>
+          <li><strong>Save project</strong> keeps every edit; <strong>Export</strong> gives you SVG or PNG.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="dropzone" id="dropzone"><div><strong>Drop a capture here</strong><br><span>.pcap, .pcapng or a saved .waterfall.json project</span></div></div>
+    <div class="range-pop" id="rangePop" hidden>
+      <div class="range-pop-title" id="rangePopTitle"></div>
+      <button class="primary small" id="rangeKeep">Keep only this range</button>
+      <button class="small" id="rangeHide">Hide these rows</button>
+      <button class="small" id="rangeCancel">Cancel</button>
+    </div>
   </section>
 
   <aside class="inspector" id="inspector"></aside>

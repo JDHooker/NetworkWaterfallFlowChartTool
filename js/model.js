@@ -19,6 +19,8 @@
       showPorts: false,
       showLegend: true,
       hideUnusedLanes: true,
+      laneBy: 'host',            // 'host' | 'port' — one lane per address, or per address:port
+      autoWiden: true,           // widen lane gaps so labels between adjacent lanes are not truncated
       hiddenProtos: [],
       filter: '',
       timeFrom: null, timeTo: null,
@@ -53,7 +55,26 @@
     }
     return project.hosts[addr];
   }
-  function hostName(project, addr) { const h = project.hosts[addr]; return (h && h.name) || addr; }
+  function hostName(project, addr) {
+    const h = project.hosts[addr];
+    if (h && h.name) return h.name;
+    // a per-port lane inherits the display name of its address: "Laptop:5000"
+    if (h && h.port != null && h.addr) { const base = project.hosts[h.addr]; if (base && base.name) return base.name + ':' + h.port; }
+    return addr;
+  }
+  function laneKey(project, addr, port) { return (project.settings.laneBy === 'port' && port != null) ? `${addr}:${port}` : addr; }
+  function laneEntry(project, addr, port) {
+    const key = laneKey(project, addr, port);
+    const isNew = !project.hosts[key];
+    const e = hostEntry(project, key);
+    if (key !== addr && e.port == null) {
+      e.port = port; e.addr = addr;
+      // keep a new port lane next to its address lane (ties keep first-seen order)
+      const base = project.hosts[addr];
+      if (isNew && base) e.order = base.order + 0.5;
+    }
+    return e;
+  }
 
   // ---------- display filter ----------
   // terms separated by spaces; all must match. forms: text | host:x | port:n | proto:x | -term (negate)
@@ -93,10 +114,13 @@
 
   // ---------- event construction ----------
   function packetEvent(p) {
+    let label = p.info;
+    // when lanes already carry the ports, drop the redundant "sport → dport " prefix of TCP/UDP summaries
+    if (p.laneSrc && p.laneSrc !== p.src && p.srcPort != null && label.startsWith(`${p.srcPort} → ${p.dstPort} `)) label = label.slice(`${p.srcPort} → ${p.dstPort} `.length);
     return {
       id: 'p:' + p.id, kind: 'packet', t: p.ts, tEnd: p.ts,
-      src: p.src, dst: p.dst, srcPort: p.srcPort, dstPort: p.dstPort,
-      proto: p.proto, family: p.family, label: p.info, bytes: p.len, payload: p.payloadLen,
+      src: p.laneSrc || p.src, dst: p.laneDst || p.dst, srcPort: p.srcPort, dstPort: p.dstPort,
+      proto: p.proto, family: p.family, label, bytes: p.len, payload: p.payloadLen,
       nPackets: 1, packets: [p], flowKey: p.flowKey, dir: p.dir, control: p.control, pureAck: p.pureAck,
       protos: [p.proto],
     };
@@ -140,7 +164,7 @@
     const map = new Map(); const events = [];
     for (const p of packets) {
       let key;
-      if (byHostPair) { key = p.src <= p.dst ? `${p.src}|${p.dst}` : `${p.dst}|${p.src}`; }
+      if (byHostPair) { const a = p.laneSrc || p.src, b = p.laneDst || p.dst; key = a <= b ? `${a}|${b}` : `${b}|${a}`; }
       else key = p.flowKey;
       let ev = map.get(key);
       if (!ev) {
@@ -176,6 +200,8 @@
     const s = project.settings;
     const hidden = new Set(s.hiddenProtos || []);
     let packets = project.packets.slice().sort((a, b) => a.ts - b.ts || a.id - b.id);
+    const byPort = (s.laneBy || 'host') === 'port';
+    for (const p of packets) { p.laneSrc = laneKey(project, p.src, p.srcPort); p.laneDst = laneKey(project, p.dst, p.dstPort); }
     const t0 = packets.length ? packets[0].ts : 0;
     const tN = packets.length ? packets[packets.length - 1].ts : 0;
 
@@ -188,8 +214,8 @@
       if (s.hideControl && p.control && p.payloadLen === 0 && p.transport === 'TCP') return false;
       if (s.timeFrom != null && p.ts - t0 < s.timeFrom) return false;
       if (s.timeTo != null && p.ts - t0 > s.timeTo) return false;
-      const hs = project.hosts[p.src], hd = project.hosts[p.dst];
-      if ((hs && hs.hidden) || (hd && hd.hidden)) return false;
+      // hidden at the address level hides every port lane of that address too
+      for (const k of [p.src, p.dst, p.laneSrc, p.laneDst]) { const hh = project.hosts[k]; if (hh && hh.hidden) return false; }
       return true;
     });
 
@@ -236,9 +262,11 @@
     // lanes
     const used = new Set();
     for (const ev of windowed) { used.add(ev.src); used.add(ev.dst); }
-    const allHosts = new Set(project.packets.flatMap(p => [p.src, p.dst]));
-    for (const h of Object.keys(project.hosts)) allHosts.add(h);
-    let lanes = [...allHosts].filter(h => !(project.hosts[h] && project.hosts[h].hidden));
+    const allHosts = new Set();
+    for (const p of project.packets) { laneEntry(project, p.src, p.srcPort); laneEntry(project, p.dst, p.dstPort); allHosts.add(p.laneSrc); allHosts.add(p.laneDst); }
+    // hand-made hosts with no packets yet, as long as they belong to the current lane mode
+    for (const h of Object.keys(project.hosts)) if ((project.hosts[h].port != null) === byPort || (!byPort && project.hosts[h].port == null)) { if (!byPort || project.hosts[h].port != null || !project.packets.some(p => p.src === h || p.dst === h)) allHosts.add(h); }
+    let lanes = [...allHosts].filter(h => { const e = project.hosts[h]; if (!e) return true; if (e.hidden) return false; if (e.port != null) { const base = project.hosts[e.addr]; if (base && base.hidden) return false; } return true; });
     if (s.hideUnusedLanes) lanes = lanes.filter(h => used.has(h));
     lanes.sort((a, b) => laneOrder(project, a) - laneOrder(project, b));
     const laneInfo = lanes.map(addr => ({ addr, name: hostName(project, addr), color: (project.hosts[addr] && project.hosts[addr].color) || null }));
@@ -257,9 +285,11 @@
   }
   function hostStats(project) {
     const counts = {};
-    for (const p of project.packets) { counts[p.src] = (counts[p.src] || 0) + 1; counts[p.dst] = (counts[p.dst] || 0) + 1; }
+    for (const p of project.packets) {
+      for (const k of new Set([p.src, p.dst, laneKey(project, p.src, p.srcPort), laneKey(project, p.dst, p.dstPort)])) counts[k] = (counts[k] || 0) + 1;
+    }
     return counts;
   }
 
-  window.Model = { defaultSettings, newProject, build, hostEntry, hostName, fmtBytes, fmtDur, fmtTime, protocolStats, hostStats, FAMILY_ORDER };
+  window.Model = { defaultSettings, newProject, build, hostEntry, hostName, laneKey, laneEntry, fmtBytes, fmtDur, fmtTime, protocolStats, hostStats, FAMILY_ORDER };
 })();

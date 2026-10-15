@@ -87,11 +87,35 @@
     const notesW = hasComments ? Math.max(140, s.notesWidth || 240) : 0;
     const titleH = project.title ? (project.subtitle ? 58 : 40) : 0;
     const headerH = 58;
-    const laneX = (i) => pad + timeCol + laneGap / 2 + i * laneGap;
     const laneIdx = new Map(lanes.map((l, i) => [l.addr, i]));
-    const lanesW = Math.max(1, lanes.length) * laneGap;
+    // A lane whose rows loop back to itself needs room to the right for the loop and its label.
+    const selfNeed = lanes.map(() => 0);
+    for (const ev of events) {
+      if (ev.src !== ev.dst) continue;
+      const i = laneIdx.get(ev.src); if (i === undefined) continue;
+      const sub = (s.showBytes && ev.kind !== 'flow' && ev.kind !== 'conversation') ? Model.fmtBytes(ev.bytes) + (ev.nPackets > 1 ? ' · ' + ev.nPackets + ' pkts' : '') : '';
+      const need = 70 + Math.max(measure(ev.label, fs), measure(sub, 10)) + 12;
+      selfNeed[i] = Math.min(900, Math.max(selfNeed[i], need));
+    }
+    // Widen the gap between adjacent lanes so the labels of the rows that run between them fit.
+    const adjNeed = lanes.map(() => 0);
+    if (s.autoWiden !== false) for (const ev of events) {
+      const a = laneIdx.get(ev.src), b = laneIdx.get(ev.dst);
+      if (a === undefined || b === undefined || Math.abs(a - b) !== 1) continue;
+      const i = Math.min(a, b);
+      const sub = [];
+      if (s.showBytes && ev.kind !== 'flow' && ev.kind !== 'conversation') sub.push(Model.fmtBytes(ev.bytes));
+      if (ev.nPackets > 1 && ev.kind === 'message') sub.push(ev.nPackets + ' pkts');
+      const need = Math.max(measure(ev.label, fs), measure(sub.join(' · '), 10)) + 36;
+      adjNeed[i] = Math.min(900, Math.max(adjNeed[i], need));
+    }
+    const laneXs = []; let lx = pad + timeCol + laneGap / 2;
+    for (let i = 0; i < lanes.length; i++) { laneXs.push(lx); lx += Math.max(laneGap, selfNeed[i], adjNeed[i]); }
+    const laneX = (i) => laneXs[i];
+    const laneRight = lanes.length ? laneXs[lanes.length - 1] + Math.max(laneGap / 2, selfNeed[lanes.length - 1]) : pad + timeCol + laneGap;
+    const lanesW = laneRight - (pad + timeCol);
     const notesX = pad + timeCol + lanesW + 16;
-    const width = pad + timeCol + lanesW + (notesW ? 16 + notesW : 0) + pad;
+    let width = pad + timeCol + lanesW + (notesW ? 16 + notesW : 0) + pad;
     const top = pad + titleH + headerH;
     const rowH = Math.max(18, s.rowHeight || 34);
 
@@ -115,6 +139,8 @@
     const legendH = legendProtos.length > 1 ? 34 : 0;
     const height = rowsBottom + 12 + legendH + pad;
 
+    const emptyMsg = events.length ? null : (built.total ? 'No events match the current filters or time window.' : 'No packets yet — open a capture or add events in the Add tab.');
+    if (emptyMsg) width = Math.max(width, measure(emptyMsg, 13) + pad * 4);
     const svg = el('svg', { xmlns: NS, width, height, viewBox: `0 0 ${width} ${height}`, 'font-family': FONT, 'data-view': 'ladder' });
     svg.appendChild(el('rect', { x: 0, y: 0, width, height, fill: theme.surface, rx: 0 }));
 
@@ -130,10 +156,11 @@
       const x = laneX(i);
       const hy = pad + titleH + 18;
       const g = el('g', { class: 'lane', 'data-host': l.addr, cursor: 'pointer' });
-      g.appendChild(el('rect', { x: x - laneGap / 2 + 4, y: pad + titleH, width: laneGap - 8, height: headerH - 8, fill: 'transparent' }));
+      const half = Math.min(i > 0 ? (x - laneX(i - 1)) / 2 : laneGap / 2, i + 1 < lanes.length ? (laneX(i + 1) - x) / 2 : laneGap / 2);
+      g.appendChild(el('rect', { x: x - half + 4, y: pad + titleH, width: half * 2 - 8, height: headerH - 8, fill: 'transparent' }));
       if (l.color) g.appendChild(el('circle', { cx: x, cy: hy - 1, r: 4, fill: l.color }));
-      g.appendChild(text(x, hy + (l.color ? 16 : 8), truncate(l.name, 13, laneGap - 16, 600), { fill: theme.ink, size: 13, weight: 600, anchor: 'middle' }));
-      if (l.name !== l.addr) g.appendChild(text(x, hy + (l.color ? 31 : 24), truncate(l.addr, 10.5, laneGap - 16), { fill: theme.muted, size: 10.5, anchor: 'middle' }));
+      g.appendChild(text(x, hy + (l.color ? 16 : 8), truncate(l.name, 13, half * 2 - 16, 600), { fill: theme.ink, size: 13, weight: 600, anchor: 'middle' }));
+      if (l.name !== l.addr) g.appendChild(text(x, hy + (l.color ? 31 : 24), truncate(l.addr, 10.5, half * 2 - 16), { fill: theme.muted, size: 10.5, anchor: 'middle' }));
       g.appendChild(el('line', { x1: x, y1: pad + titleH + headerH - 6, x2: x, y2: rowsBottom + 6, stroke: theme.grid, 'stroke-width': 1 }));
       gLanes.appendChild(g);
     });
@@ -158,6 +185,7 @@
       const sel = opts.selectedId === ev.id;
       const g = el('g', { class: 'row' + (ev.hidden ? ' hidden-row' : ''), 'data-id': ev.id, cursor: 'pointer', opacity: ev.hidden ? 0.4 : null });
       g.appendChild(el('rect', { class: 'rowbg', x: pad + 2, y: r.y, width: width - pad * 2 - 4, height: r.h, rx: 4, fill: sel ? theme.select : 'transparent' }));
+      g.setAttribute('data-y0', r.y); g.setAttribute('data-y1', r.y + r.h);
       // time
       if (s.timeMode !== 'none') g.appendChild(text(pad + timeCol - 12, cy + 1, Model.fmtTime(ev.t, s.timeMode, built.t0, r.prevT), { fill: theme.muted, size: 11, anchor: 'end', tabular: true }));
       const si = laneIdx.get(ev.src), di = laneIdx.get(ev.dst);
@@ -169,8 +197,13 @@
         // self-loop
         g.appendChild(el('path', { d: `M${x1},${cy - 7} C${x1 + 44},${cy - 7} ${x1 + 44},${cy + 7} ${x1 + 6},${cy + 7}`, fill: 'none', stroke: color, 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-dasharray': dashed }));
         g.appendChild(el('polygon', { points: `${x1},${cy + 7} ${x1 + 9},${cy + 2.5} ${x1 + 9},${cy + 11.5}`, fill: color }));
-        const label = truncate(ev.label, fs, laneGap - 70);
-        g.appendChild(text(x1 + 52, cy + 4, label, { fill: theme.ink, size: fs }));
+        const availSelf = (si + 1 < lanes.length ? laneX(si + 1) - x1 : Math.max(laneGap, selfNeed[si])) - 70;
+        g.appendChild(text(x1 + 52, cy - 2, truncate(ev.label, fs, availSelf), { fill: theme.ink, size: fs }));
+        const subSelf = [];
+        if (s.showBytes && ev.kind !== 'flow' && ev.kind !== 'conversation') subSelf.push(Model.fmtBytes(ev.bytes));
+        if (ev.nPackets > 1 && ev.kind === 'message') subSelf.push(ev.nPackets + ' pkts');
+        if (s.showPorts && ev.srcPort != null) subSelf.push(`:${ev.srcPort} → :${ev.dstPort}`);
+        if (subSelf.length) g.appendChild(text(x1 + 52, cy + 12, truncate(subSelf.join(' · '), 10, availSelf), { fill: theme.muted, size: 10 }));
       } else {
         const dir = x2 > x1 ? 1 : -1;
         const head = 9;
@@ -201,9 +234,7 @@
     }
     svg.appendChild(gRows);
 
-    if (!events.length) {
-      svg.appendChild(text(width / 2, top + 40, built.total ? 'No events match the current filters.' : 'No packets yet — open a capture or add events in the Events panel.', { fill: theme.muted, size: 13, anchor: 'middle' }));
-    }
+    if (emptyMsg) svg.appendChild(text(width / 2, top + 40, emptyMsg, { fill: theme.muted, size: 13, anchor: 'middle' }));
     if (legendH) drawLegend(svg, project, theme, legendProtos, pad, rowsBottom + 16, width - pad * 2);
     return svg;
   }
@@ -249,7 +280,7 @@
     const span = Math.max(tMax - tMin, 1e-6);
     const x = (t) => plotX + ((t - tMin) / span) * (plotW - 8) + 4;
 
-    const svg = el('svg', { xmlns: NS, width, height, viewBox: `0 0 ${width} ${height}`, 'font-family': FONT, 'data-view': 'timeline' });
+    const svg = el('svg', { xmlns: NS, width, height, viewBox: `0 0 ${width} ${height}`, 'font-family': FONT, 'data-view': 'timeline', 'data-plotx': plotX, 'data-plotw': plotW, 'data-tmin': tMin, 'data-span': span });
     svg.appendChild(el('rect', { x: 0, y: 0, width, height, fill: theme.surface }));
     if (project.title) {
       svg.appendChild(text(pad, pad + 18, project.title, { fill: theme.ink, size: 18, weight: 600 }));
@@ -275,6 +306,7 @@
       const sel = opts.selectedId === ev.id;
       const g = el('g', { class: 'row', 'data-id': ev.id, cursor: 'pointer', opacity: ev.hidden ? 0.4 : null });
       g.appendChild(el('rect', { class: 'rowbg', x: pad + 2, y: ry, width: width - pad * 2 - 4, height: rowH, rx: 4, fill: sel ? theme.select : 'transparent' }));
+      g.setAttribute('data-y0', ry); g.setAttribute('data-y1', ry + rowH);
       const srcN = Model.hostName(project, ev.src), dstN = Model.hostName(project, ev.dst);
       const twoWay = ev.kind === 'flow' || ev.kind === 'conversation';
       const ports = s.showPorts && ev.srcPort != null ? [`:${ev.srcPort}`, `:${ev.dstPort}`] : ['', ''];
@@ -293,7 +325,7 @@
       gRows.appendChild(g);
     });
     svg.appendChild(gRows);
-    if (!events.length) svg.appendChild(text(width / 2, top + 40, built.total ? 'No events match the current filters.' : 'No packets yet — open a capture or add events in the Events panel.', { fill: theme.muted, size: 13, anchor: 'middle' }));
+    if (!events.length) svg.appendChild(text(width / 2, top + 40, built.total ? 'No events match the current filters or time window.' : 'No packets yet — open a capture or add events in the Add tab.', { fill: theme.muted, size: 13, anchor: 'middle' }));
     if (legendH) drawLegend(svg, project, theme, legendProtos, pad, top + events.length * rowH + 16, width - pad * 2);
     return svg;
   }
@@ -306,7 +338,7 @@
   function svgString(svg) {
     const clone = svg.cloneNode(true);
     clone.setAttribute('xmlns', NS);
-    for (const r of clone.querySelectorAll('rect.rowbg')) r.remove();
+    for (const r of clone.querySelectorAll('rect.rowbg, rect.range-rect')) r.remove();
     return '<?xml version="1.0" encoding="UTF-8"?>\n' + new XMLSerializer().serializeToString(clone);
   }
 

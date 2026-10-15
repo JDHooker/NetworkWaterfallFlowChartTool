@@ -33,6 +33,18 @@ waterfall). Most useful at Flow granularity to compare connection durations.
 
 Edits you make at packet level (comments, renames, colours) carry up to the coarser levels.
 
+### Lanes: one per host, or one per host : port
+
+By default every address gets one lane, and traffic from a host to itself (for example a local
+service on 127.0.0.1) is drawn as a loop on that lane. Switch **Lanes** to *One per host : port*
+and each address:port pair becomes its own lane, so `127.0.0.1:52000 → 127.0.0.1:8080` reads like a
+conversation between two parties. Naming or hiding the plain address in the Hosts tab applies to all
+of its port lanes (a lane named from its address shows as `Laptop:8080`); each port lane can also be
+named on its own. Try `samples/loopback.pcap`.
+
+Lane spacing is a minimum: gaps grow automatically so the labels between neighbouring lanes are not
+cut off (turn off *Widen lanes so labels fit* if you prefer fixed spacing).
+
 ### Decoded protocols
 
 Ethernet (with VLAN), Linux cooked capture, loopback, raw IP, 802.11 addresses; IPv4, IPv6 (with
@@ -49,6 +61,10 @@ Anything else is shown as its transport or EtherType.
 * **Click a row** — the inspector on the right lets you change its label, add a comment, give it its own
   colour, or hide it. Decoded fields for the packet are listed underneath. `Delete` hides the selected row,
   `↑`/`↓` move the selection, `Esc` deselects.
+* **Drag over rows** — in the waterfall, drag up or down across the rows you care about (in the
+  timeline, drag left or right along the time axis). A popover offers **Keep only this range**, which
+  crops the chart to that time window and cuts everything else out (a "Cropped to …" chip in the
+  toolbar restores the full capture with ×), or **Hide these rows**, which hides just the selection.
 * **Events tab** — a checklist of the rows on the current page; untick to hide, click to select.
 * **Display filter** — space-separated terms that all have to match: plain text searches labels, hosts,
   protocols and comments; `host:` `src:` `dst:` `port:` `proto:` `label:` `comment:` narrow a term; a
@@ -82,8 +98,9 @@ js/pcap.js            pcap / pcapng reader and protocol decoders
 js/model.js           events, granularity, annotations, filters
 js/render.js          SVG rendering (waterfall + timeline), SVG/PNG export
 js/app.js             UI, editing, project save/load, templates
-samples/              sample capture and a from-scratch example project
-tools/make_sample_pcap.py   regenerates samples/sample.pcap (python3, no dependencies)
+samples/              sample captures (sample.pcap/.pcapng, loopback.pcap) and a from-scratch example project
+tools/make_sample_pcap.py     regenerates samples/sample.pcap (python3, no dependencies)
+tools/make_loopback_pcap.py   regenerates samples/loopback.pcap
 ```
 
 A project file (`*.waterfall.json`) contains the decoded packets plus every edit, so it re-opens
@@ -92,7 +109,7 @@ without the original capture. Nothing ever leaves the browser.
 ## Serving it (optional)
 
 If you serve the folder over HTTP (e.g. `python3 -m http.server`), URL parameters work:
-`index.html?load=samples/sample.pcap&granularity=message&view=timeline&theme=dark&hideAcks=1`.
+`index.html?load=samples/sample.pcap&granularity=message&view=timeline&theme=dark&hideAcks=1&laneBy=port`.
 Any setting name from the Chart tab can be passed this way.
 
 ## Limits
