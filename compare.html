@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Waterfall Chart Tool — Compare</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/compare.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">Waterfall Chart Tool</div>
+  <div class="seg mode-seg" id="modeSeg" title="Switch between the waterfall chart and comparing two captures"><button data-mode="waterfall">Waterfall</button><button data-mode="compare">Compare</button></div>
+  <input id="title" class="title-input" placeholder="Chart title" spellcheck="false">
+  <div class="actions">
+    <button id="btnOpen" class="primary" title="Open a .pcap or .pcapng capture">Open capture</button>
+    <button id="btnNew" title="Start an empty chart and add events by hand">New blank</button>
+    <span class="sep"></span>
+    <button id="btnOpenProject" title="Open a saved .waterfall.json project (keeps edits)">Open project</button>
+    <button id="btnSaveProject" title="Save everything, including comments and renames, as JSON">Save project</button>
+    <span class="sep"></span>
+    <button id="btnExportSvg">Export SVG</button>
+    <button id="btnExportPng">Export PNG</button>
+    <span class="sep"></span>
+    <button id="btnTheme" title="Toggle light / dark">Dark</button>
+  </div>
+  <input type="file" id="fileCapture" accept=".pcap,.pcapng,.cap,.dmp" hidden>
+  <input type="file" id="fileProject" accept=".json" hidden>
+</header>
+
+<main class="layout">
+  <aside class="sidebar">
+    <nav class="tabs">
+      <button data-tab="chart" class="active">Chart</button>
+      <button data-tab="hosts">Hosts</button>
+      <button data-tab="events">Events</button>
+      <button data-tab="add">Add</button>
+    </nav>
+
+    <section class="tab active" id="tab-chart">
+      <div class="field"><label>View</label>
+        <div class="seg" data-setting="view"><button data-v="ladder">Waterfall</button><button data-v="timeline">Timeline</button></div></div>
+      <div class="field"><label>Granularity</label>
+        <div class="seg" data-setting="granularity"><button data-v="packet">Packet</button><button data-v="message">Message</button><button data-v="flow">Flow</button><button data-v="conversation">Hosts</button></div>
+        <p class="hint" id="granHint"></p></div>
+      <div class="field"><label>Lanes</label>
+        <div class="seg" data-setting="laneBy"><button data-v="host">One per host</button><button data-v="port">One per host : port</button></div>
+        <p class="hint">Per-port lanes turn loopback traffic (127.0.0.1:aaa ⇄ 127.0.0.1:bbb) into an exchange between two lanes.</p></div>
+      <div class="field"><label>Row spacing</label>
+        <div class="seg" data-setting="layout"><button data-v="even">Even</button><button data-v="scaled">Time-scaled</button></div></div>
+      <div class="field"><label>Time labels</label>
+        <div class="seg" data-setting="timeMode"><button data-v="relative">Relative</button><button data-v="absolute">Clock</button><button data-v="delta">Delta</button><button data-v="none">None</button></div></div>
+
+      <div class="field"><label>Display filter <span class="help" title="Space-separated terms, all must match. Plain text matches labels, hosts, protocols and comments. Prefixes: host: src: dst: port: proto: label: comment:  Put - in front to exclude. Example: tls -ack host:10.0.0.5">?</span></label>
+        <input id="filter" placeholder="e.g. tls -ack port:443" spellcheck="false"></div>
+
+      <div class="field checks">
+        <label><input type="checkbox" data-setting="hideAcks"> Hide pure TCP ACKs</label>
+        <label><input type="checkbox" data-setting="hideControl"> Hide TCP handshake / teardown</label>
+        <label><input type="checkbox" data-setting="showHidden"> Show hidden rows (faded)</label>
+        <label><input type="checkbox" data-setting="showComments"> Comments column</label>
+        <label><input type="checkbox" data-setting="showBytes"> Show sizes</label>
+        <label><input type="checkbox" data-setting="showPorts"> Show ports</label>
+        <label><input type="checkbox" data-setting="showLegend"> Legend</label>
+        <label><input type="checkbox" data-setting="hideUnusedLanes"> Hide lanes with no visible traffic</label>
+        <label><input type="checkbox" data-setting="autoWiden"> Widen lanes so labels fit (lane spacing becomes a minimum)</label>
+      </div>
+
+      <details open><summary>Protocols</summary>
+        <div id="protoList" class="proto-list"></div>
+      </details>
+
+      <details><summary>Time window &amp; paging</summary>
+        <div class="grid2">
+          <label>From (s)<input type="number" step="any" data-setting="timeFrom" placeholder="start"></label>
+          <label>To (s)<input type="number" step="any" data-setting="timeTo" placeholder="end"></label>
+          <label>Rows per page<input type="number" min="10" max="5000" data-setting="limit"></label>
+          <label>Gap marker (s)<input type="number" step="any" min="0" data-setting="gapMarker"></label>
+          <label>Message gap (s)<input type="number" step="any" min="0" data-setting="messageGap" title="At Message granularity, consecutive segments in the same direction closer than this are merged"></label>
+        </div>
+      </details>
+
+      <details><summary>Sizing &amp; text</summary>
+        <div class="grid2">
+          <label>Lane spacing (min)<input type="number" min="120" max="800" data-setting="laneGap"></label>
+          <label>Row height<input type="number" min="18" max="120" data-setting="rowHeight"></label>
+          <label>Font size<input type="number" min="9" max="20" data-setting="fontSize"></label>
+          <label>Notes width<input type="number" min="140" max="600" data-setting="notesWidth"></label>
+          <label>Timeline width<input type="number" min="600" max="4000" step="50" data-setting="timelineWidth"></label>
+        </div>
+        <button id="btnFit" class="small">Fit lanes to window</button>
+        <label class="block">Subtitle<input id="subtitle" placeholder="optional subtitle" spellcheck="false"></label>
+      </details>
+
+      <details><summary>Reset</summary>
+        <div class="row-buttons">
+          <button id="btnUnhideAll" class="small">Unhide all rows</button>
+          <button id="btnClearNotes" class="small">Clear comments &amp; renames</button>
+          <button id="btnResetSettings" class="small">Reset chart settings</button>
+        </div>
+      </details>
+    </section>
+
+    <section class="tab" id="tab-hosts">
+      <p class="hint">Rename hosts to make lanes readable, give them colours, hide them, or reorder lanes.</p>
+      <div class="row-buttons">
+        <button class="small" id="btnHostsFirstSeen">Order: first seen</button>
+        <button class="small" id="btnHostsLocalFirst">Order: local first</button>
+        <button class="small" id="btnHostsBusiest">Order: busiest</button>
+      </div>
+      <div id="hostList" class="host-list"></div>
+    </section>
+
+    <section class="tab" id="tab-events">
+      <input id="eventSearch" placeholder="search rows on this page" spellcheck="false">
+      <p class="hint" id="eventsHint"></p>
+      <div id="eventList" class="event-list"></div>
+    </section>
+
+    <section class="tab" id="tab-add">
+      <p class="hint">Build a chart from scratch, or add explanatory events to a capture. Hosts typed here become lanes automatically.</p>
+      <details open><summary>Add a host (lane)</summary>
+        <div class="grid2">
+          <label>Address / id<input id="newHostAddr" placeholder="10.0.0.5" spellcheck="false"></label>
+          <label>Display name<input id="newHostName" placeholder="Laptop" spellcheck="false"></label>
+        </div>
+        <button id="btnAddHost" class="small">Add host</button>
+      </details>
+      <details open><summary>Add an event</summary>
+        <div class="grid2">
+          <label>Time (s)<input id="evTime" type="number" step="any" value="0"></label>
+          <label>Protocol<select id="evProto"></select></label>
+          <label>From<input id="evSrc" list="hostOptions" placeholder="host" spellcheck="false"></label>
+          <label>To<input id="evDst" list="hostOptions" placeholder="host" spellcheck="false"></label>
+          <label>From port<input id="evSport" type="number" placeholder="optional"></label>
+          <label>To port<input id="evDport" type="number" placeholder="optional"></label>
+          <label>Size (bytes)<input id="evBytes" type="number" value="0"></label>
+          <label>Custom protocol<input id="evProtoCustom" placeholder="when Protocol = Other"></label>
+        </div>
+        <label class="block">Label<input id="evLabel" placeholder="what happens in this event" spellcheck="false"></label>
+        <label class="block">Comment<textarea id="evComment" rows="2" placeholder="optional annotation"></textarea></label>
+        <div class="row-buttons"><button id="btnAddEvent" class="primary small">Add event</button><label class="inline"><input type="checkbox" id="evAutoAdvance" checked> auto-advance time by <input id="evStep" type="number" step="any" value="0.02" class="tiny"> s</label></div>
+        <datalist id="hostOptions"></datalist>
+      </details>
+      <details open><summary>Insert a template sequence</summary>
+        <div class="grid2">
+          <label>Template<select id="tplSelect"></select></label>
+          <label>Start time (s)<input id="tplStart" type="number" step="any" value="0"></label>
+          <label>Client / A<input id="tplA" list="hostOptions" placeholder="host" spellcheck="false"></label>
+          <label>Server / B<input id="tplB" list="hostOptions" placeholder="host" spellcheck="false"></label>
+          <label>Spacing (s)<input id="tplSpacing" type="number" step="any" value="0.02"></label>
+        </div>
+        <button id="btnInsertTemplate" class="small">Insert template</button>
+      </details>
+    </section>
+  </aside>
+
+  <section class="chart-area" id="chartArea">
+    <div class="chart-toolbar">
+      <span id="status" class="status"></span>
+      <span id="cropInfo" class="chip" hidden><span id="cropText"></span><button id="btnClearCrop" class="chip-x" title="Show the whole capture again">×</button></span>
+      <span class="spacer"></span>
+      <span class="hint-inline">drag over rows to crop or hide</span>
+      <button id="pagePrev" class="small" title="Previous page">◀</button>
+      <button id="pageNext" class="small" title="Next page">▶</button>
+      <span class="sep"></span>
+      <button id="zoomOut" class="small">−</button>
+      <span id="zoomLabel" class="status">100%</span>
+      <button id="zoomIn" class="small">+</button>
+      <button id="zoomReset" class="small">Reset</button>
+    </div>
+    <div class="chart-scroll" id="chartScroll"></div>
+    <div class="welcome" id="welcome" hidden>
+      <div class="welcome-card">
+        <h2>Draw a waterfall of network traffic</h2>
+        <p>Drop a <strong>.pcap</strong> or <strong>.pcapng</strong> anywhere on this page, or build a diagram by hand. Files are read in your browser and never uploaded.</p>
+        <div class="welcome-actions">
+          <button class="primary" id="wOpen">Open a capture…</button>
+          <button id="wNew">Start from scratch</button>
+          <button id="wProject">Open a saved project…</button>
+        </div>
+        <ul class="welcome-tips">
+          <li><strong>Granularity</strong> switches between packets, messages, flows and host pairs.</li>
+          <li><strong>Click</strong> a row to rename it, comment on it, recolour or hide it. <strong>Drag</strong> over rows to keep only that range or hide it.</li>
+          <li><strong>Hosts</strong> tab renames lanes; <strong>Lanes</strong> can be one per host or one per host:port.</li>
+          <li><strong>Save project</strong> keeps every edit; <strong>Export</strong> gives you SVG or PNG.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="dropzone" id="dropzone"><div><strong>Drop a capture here</strong><br><span>.pcap, .pcapng or a saved .waterfall.json project</span></div></div>
+    <div class="range-pop" id="rangePop" hidden>
+      <div class="range-pop-title" id="rangePopTitle"></div>
+      <button class="primary small" id="rangeKeep">Keep only this range</button>
+      <button class="small" id="rangeHide">Hide these rows</button>
+      <button class="small" id="rangeCancel">Cancel</button>
+    </div>
+  </section>
+
+  <aside class="inspector" id="inspector"></aside>
+</main>
+
+<main class="cmp" id="compareView" hidden>
+  <aside class="sidebar cmp-side">
+    <div class="cmp-cap" id="capA" data-side="A">
+      <div class="cmp-cap-head"><span class="cmp-badge a">A</span><strong class="cmp-name">No capture</strong></div>
+      <div class="cmp-meta"></div>
+      <div class="row-buttons"><button class="small primary" data-act="open">Open capture…</button><button class="small" data-act="waterfall" title="Open this capture in the Waterfall view">Show in waterfall</button></div>
+      <label class="block">Client host <span class="help" title="Directions are measured from this host: → sent by it, ← received by it. Picked automatically from who opens connections.">?</span><select data-k="client"></select></label>
+      <label class="block">Display filter<input data-k="filter" placeholder="e.g. -proto:arp port:443" spellcheck="false"></label>
+    </div>
+    <div class="cmp-cap" id="capB" data-side="B">
+      <div class="cmp-cap-head"><span class="cmp-badge b">B</span><strong class="cmp-name">No capture</strong></div>
+      <div class="cmp-meta"></div>
+      <div class="row-buttons"><button class="small primary" data-act="open">Open capture…</button><button class="small" data-act="waterfall" title="Open this capture in the Waterfall view">Show in waterfall</button></div>
+      <label class="block">Client host <span class="help" title="Directions are measured from this host: → sent by it, ← received by it. Picked automatically from who opens connections.">?</span><select data-k="client"></select></label>
+      <label class="block">Display filter<input data-k="filter" placeholder="e.g. -proto:arp port:443" spellcheck="false"></label>
+    </div>
+    <div class="row-buttons"><button id="cmpSwap" class="small">Swap A ⇄ B</button></div>
+
+    <div class="field"><label>Compare</label>
+      <div class="seg" data-copt="unit"><button data-v="packet">Packets</button><button data-v="message">Messages</button></div>
+      <p class="hint">Messages merge consecutive segments in one direction, which hides differences in how data was split into packets.</p></div>
+    <div class="field checks">
+      <label><input type="checkbox" data-copt="hideAcks"> Ignore pure TCP ACKs</label>
+      <label><input type="checkbox" data-copt="hideControl"> Ignore TCP handshake / teardown</label>
+      <label><input type="checkbox" data-copt="tunnel"> Tunnel-aware matching <span class="help" title="For a proxied / tunneled capture against a direct one: the tunnel hides handshakes inside encrypted data and adds framing and padding, so encrypted data may match a handshake and sizes are compared more loosely.">?</span></label>
+    </div>
+    <details><summary>Matching weights</summary>
+      <div class="grid2">
+        <label>Size<input type="number" min="0" max="5" step="0.1" data-copt="sizeWeight"></label>
+        <label>Position<input type="number" min="0" max="5" step="0.1" data-copt="timeWeight"></label>
+        <label>Gap penalty<input type="number" min="0" max="5" step="0.1" data-copt="gap"></label>
+      </div>
+      <p class="hint">Higher size weight trusts packet sizes more; higher position weight keeps matches near the same point in each capture; a higher gap penalty prefers pairing over leaving packets unmatched.</p>
+      <button id="cmpResetWeights" class="small">Reset weights</button>
+    </details>
+    <div class="row-buttons"><button id="cmpResetLinks" class="small">Reset manual links</button><button id="cmpExport" class="small">Export CSV</button></div>
+    <details><summary>How matching works</summary>
+      <p class="hint">Each side is turned into a list of packets (or messages) after the filters above. Every one gets a direction relative to the client host, a kind (SYN, DNS query, TLS Client Hello, TLS data …), its payload size and any names it mentions (SNI, DNS, Host). The two lists are then aligned in order, like a text diff: pairs score for same direction, same kind, similar size, shared names and similar position; leaving a packet unmatched costs the gap penalty. Packets in different directions are never paired.</p>
+      <p class="hint">Click a row, then <strong>Link</strong> or <strong>Unlink</strong> to correct the result; links stay fixed while the rest is re-aligned around them.</p>
+    </details>
+  </aside>
+
+  <section class="cmp-main chart-area" id="cmpMain">
+    <div class="chart-toolbar">
+      <span id="cmpStatus" class="status"></span>
+      <span class="spacer"></span>
+      <div class="seg cmp-show" data-copt="show"><button data-v="all">All rows</button><button data-v="matched">Matched</button><button data-v="unmatched">Unmatched</button></div>
+    </div>
+    <div class="cmp-scroll" id="cmpScroll">
+      <div class="cmp-summary" id="cmpSummary"></div>
+      <table class="cmp-table" id="cmpTable"></table>
+      <div class="cmp-more" id="cmpMore"></div>
+    </div>
+    <div class="welcome" id="cmpEmpty">
+      <div class="welcome-card">
+        <h2>Compare two captures</h2>
+        <p>Open two <strong>.pcap</strong> or <strong>.pcapng</strong> files, for example the same <code>curl https://www.youtube.com</code> once through a proxy or tunnel and once directly. Their packets are lined up side by side so you can see which ones correspond, what only one side has, and how much the tunnel adds. Files are read in your browser and never uploaded.</p>
+        <div class="welcome-actions">
+          <button class="primary" id="cmpOpenA">Open capture A…</button>
+          <button class="primary" id="cmpOpenB">Open capture B…</button>
+          <button id="cmpSamples">Try the sample pair</button>
+        </div>
+        <ul class="welcome-tips">
+          <li>Drop two files at once to load both, or drop one onto the A or B panel on the left.</li>
+          <li><strong>=</strong> strong match, <strong>≈</strong> weak match, <strong>−</strong> / <strong>+</strong> only in A / only in B. The middle column shows how much bigger B is.</li>
+          <li>Use each side's display filter to leave out unrelated traffic (for example <code>-proto:mdns</code>).</li>
+        </ul>
+      </div>
+    </div>
+    <div class="dropzone"><div><strong>Drop captures here</strong><br><span>one file fills the next free slot, two files fill A and B</span></div></div>
+  </section>
+
+  <aside class="inspector" id="cmpDetail"></aside>
+</main>
+<input type="file" id="cmpFile" accept=".pcap,.pcapng,.cap,.dmp" multiple hidden>
+<div id="tooltip" class="tooltip" hidden></div>
+<div id="toast" class="toast" hidden></div>
+
+<script src="js/pcap.js"></script>
+<script src="js/model.js"></script>
+<script src="js/render.js"></script>
+<script src="js/app.js"></script>
+<script src="js/compare.js"></script>
+</body>
+</html>
